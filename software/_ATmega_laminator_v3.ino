@@ -2,7 +2,7 @@
 #include <PID_v1.h>
 // config ///////////////////////////////////////////////////////////
 
-#define use_display                 1 // jezeli chcesz uzywac wyswietlacza
+#define use_display_and_temp_config 1 // jezeli chcesz uzywac wyswietlacza i konfiguracji temperatury
 #define use_serial                  1 // jezeli chcesz uzywac seriala
 #define use_serial_pid_tune         1 // jezeli chcesz uzywac seriala do ustawiania parametrow PID
 
@@ -28,7 +28,7 @@
     #define SERIAL_BAUD             115200
 #endif
 
-#if use_display
+#if use_display_and_temp_config
     #include <EEPROM.h>
     #include <TM1637Display.h>
     #define DISPLAY_BRIGHTNES       2  // 0 - 7
@@ -53,11 +53,11 @@ bool pOn = P_ON_E;
 double Kp=15.0, Ki=0.06, Kd=0.0;        // PID tuning
 double Setpoint, Input, Output;
 
-PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, pOn, DIRECT);
+PID PIDtemp(&Input, &Output, &Setpoint, Kp, Ki, Kd, pOn, DIRECT);
 
 
 /// functions definition ////////////////////////////////////////////////
-double read_MAX6675() {
+double readMAX6675() {
     static uint16_t v = 0;
     static uint32_t update_temp_time;
     if(millis() - update_temp_time >= 200) {
@@ -80,7 +80,7 @@ double read_MAX6675() {
 }
 
 
-#if use_display
+#if use_display_and_temp_config
     void updateDisplay(int value) {
         uint16_t interval = 250;
         static uint32_t displayTime = 0;
@@ -106,6 +106,39 @@ double read_MAX6675() {
             sate[0] = 0b01011000;
         }
         display.setSegments(sate, 1, 0);
+    }
+
+    void setupHeatingTemp(void) {
+        EEPROM.get(0, heater_temp);
+        if(digitalRead(HEATER_COOLING_PIN)) {
+            uint8_t s[] = { 0b01110100, 0b00000000 };
+            uint8_t state[] = {s[0]};
+            display.showNumberDec(heater_temp, false);
+            display.setSegments(state, 1, 0);
+            uint32_t update_heating_temp = millis();
+            int16_t t1 = analogRead(MOTOR_SPEED_SET_PIN);
+            while(millis() - update_heating_temp < 5000) {
+                int16_t t2 = analogRead(MOTOR_SPEED_SET_PIN);
+                if((t2 > t1 + 100) || (t2 < t1 - 100)) {
+                    bool x = 1;
+                    while(millis() - update_heating_temp < 15000) {
+                        heater_temp = analogRead(MOTOR_SPEED_SET_PIN);
+                        heater_temp = map(heater_temp, 0, 1023, HEATER_TEMP_MIN, HEATER_TEMP_MAX);
+                        x = !x;
+                        state[0] = s[x];
+                        display.showNumberDec(heater_temp, false);
+                        display.setSegments(state, 1, 0);
+                        _delay_ms(150);
+                    }
+                    EEPROM.put(0, heater_temp);
+                    state[0] = s[0];
+                    display.showNumberDec(heater_temp, false);
+                    display.setSegments(state, 1, 0);
+                    _delay_ms(2000);
+                }
+                _delay_ms(100);
+            }
+        }
     }
 #endif
 
@@ -148,13 +181,13 @@ double read_MAX6675() {
       p = double(foo.asFloat[3]);           //
       i = double(foo.asFloat[4]);           //
       d = double(foo.asFloat[5]);           //
-      myPID.SetTunings(p, i, d);            //
+      PIDtemp.SetTunings(p, i, d);            //
 
-      if(Auto_Man==0) myPID.SetMode(MANUAL);// * set the controller mode
-      else myPID.SetMode(AUTOMATIC);             //
+      if(Auto_Man==0) PIDtemp.SetMode(MANUAL);// * set the controller mode
+      else PIDtemp.SetMode(AUTOMATIC);             //
 
-      if(Direct_Reverse==0) myPID.SetControllerDirection(DIRECT);// * set the controller Direction
-      else myPID.SetControllerDirection(REVERSE);          //
+      if(Direct_Reverse==0) PIDtemp.SetControllerDirection(DIRECT);// * set the controller Direction
+      else PIDtemp.SetControllerDirection(REVERSE);          //
     }
     Serial.flush();                         // * clear any random data from the serial buffer
   }
@@ -167,16 +200,16 @@ double read_MAX6675() {
     Serial.print(" ");
     Serial.print(Output);
     Serial.print(" ");
-    Serial.print(myPID.GetKp());
+    Serial.print(PIDtemp.GetKp());
     Serial.print(" ");
-    Serial.print(myPID.GetKi());
+    Serial.print(PIDtemp.GetKi());
     Serial.print(" ");
-    Serial.print(myPID.GetKd());
+    Serial.print(PIDtemp.GetKd());
     Serial.print(" ");
-    if(myPID.GetMode()==AUTOMATIC) Serial.print("Automatic");
+    if(PIDtemp.GetMode()==AUTOMATIC) Serial.print("Automatic");
     else Serial.print("Manual");
     Serial.print(" ");
-    if(myPID.GetDirection()==DIRECT) Serial.println("Direct");
+    if(PIDtemp.GetDirection()==DIRECT) Serial.println("Direct");
     else Serial.println("Reverse");
     Serial.println();
   }
@@ -204,51 +237,22 @@ void setup() {
         Serial.begin(SERIAL_BAUD);
     #endif
 
-    #if use_display
+    #if use_display_and_temp_config
         display.setBrightness(DISPLAY_BRIGHTNES);
 
-        EEPROM.get(0, heater_temp);
-        if(digitalRead(HEATER_COOLING_PIN)) {
-            uint8_t s[] = { 0b01110100, 0b00000000 };
-            uint8_t state[] = {s[0]};
-            display.showNumberDec(heater_temp, false);
-            display.setSegments(state, 1, 0);
-            uint32_t update_heating_temp = millis();
-            int16_t t1 = analogRead(MOTOR_SPEED_SET_PIN);
-            while(millis() - update_heating_temp < 5000) {
-                int16_t t2 = analogRead(MOTOR_SPEED_SET_PIN);
-                if((t2 > t1 + 100) || (t2 < t1 - 100)) {
-                    bool x = 1;
-                    while(millis() - update_heating_temp < 15000) {
-                        heater_temp = analogRead(MOTOR_SPEED_SET_PIN);
-                        heater_temp = map(heater_temp, 0, 1023, HEATER_TEMP_MIN, HEATER_TEMP_MAX);
-                        x = !x;
-                        state[0] = s[x];
-                        display.showNumberDec(heater_temp, false);
-                        display.setSegments(state, 1, 0);
-                        _delay_ms(150);
-                    }
-                    EEPROM.put(0, heater_temp);
-                    state[0] = s[0];
-                    display.showNumberDec(heater_temp, false);
-                    display.setSegments(state, 1, 0);
-                    _delay_ms(2000);
-                }
-                _delay_ms(100);
-            }
-        }
+        setupHeatingTemp();
     #endif
 
     Setpoint = heater_temp;
 
-    myPID.SetOutputLimits(0, WindowSize);
-    myPID.SetSampleTime(250);
-    myPID.SetMode(AUTOMATIC);
+    PIDtemp.SetOutputLimits(0, WindowSize);
+    PIDtemp.SetSampleTime(250);
+    PIDtemp.SetMode(AUTOMATIC);
 }
 
 // main ///////////////////////////////////////////////////////////
 void loop() {
-    Input = read_MAX6675();
+    Input = readMAX6675();
     heater_cooling_state = !digitalRead(HEATER_COOLING_PIN);
 
     if(heater_cooling_state) {
@@ -278,9 +282,7 @@ void loop() {
         }
 
         // heater ///////////////////////////////////////////////////////////
-
-        /// with pid
-        myPID.Compute();
+        PIDtemp.Compute();
 
         static uint32_t WindowStartTime = millis();
         if (millis() - WindowStartTime > WindowSize) {
@@ -295,7 +297,7 @@ void loop() {
     }
 
     // display ///////////////////////////////////////////////////////////
-    #if use_display
+    #if use_display_and_temp_config
         updateDisplay((int)Input);
         updateDisplayState();
     #endif
