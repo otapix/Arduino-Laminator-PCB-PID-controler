@@ -5,6 +5,8 @@
 #define use_display_and_temp_config 1 // jezeli chcesz uzywac wyswietlacza i konfiguracji temperatury
 #define use_serial                  1 // jezeli chcesz uzywac seriala
 #define use_serial_pid_tune         1 // jezeli chcesz uzywac seriala do ustawiania parametrow PID
+#define use_cooling_switch_button   1 // 1 - jezeli chcesz uzywac przelacznika do wlaczenie chlodzenia,
+                                      // 0 - jezeli chcesz uzyc przycisku do wlaczenie chlodzenia
 
 #define MAX6675_SO                  5  //  9 // PD5
 #define MAX6675_CS                  6  // 10 // PD6
@@ -253,7 +255,17 @@ void setup() {
 // main ///////////////////////////////////////////////////////////
 void loop() {
     Input = readMAX6675();
-    heater_cooling_state = !digitalRead(HEATER_COOLING_PIN);
+
+    #if use_cooling_switch_button
+        heater_cooling_state = !digitalRead(HEATER_COOLING_PIN);
+    #else
+        if(!digitalRead(HEATER_COOLING_PIN)) {
+            heater_cooling_state = !heater_cooling_state;
+            while(!digitalRead(HEATER_COOLING_PIN)) {
+                _delay_ms(50);
+            }
+        }
+    #endif
 
     if(heater_cooling_state) {
         // cooling /////////////////////////////////////////////////////////
